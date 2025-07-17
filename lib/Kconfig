@@ -4,5 +4,5 @@
 menu "Custom libraries"
 
 rsource "custom/Kconfig"
-
+rsource "stepper_control/Kconfig"
 endmenu

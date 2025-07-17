@@ -1,0 +1,57 @@
+@startuml
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+
+package "Stepper Driver API" {
+  enum "stepper_event" {
+	STEPPER_EVENT_STEPS_COMPLETED
+	STEPPER_EVENT_LEFT_END_STOP_DETECTED
+	STEPPER_EVENT_RIGHT_END_STOP_DETECTED
+	STEPPER_EVENT_STOPPED
+	STEPPER_DRV_EVENT_STALL_DETETCTED
+    STEPPER_DRV_EVENT_FAULT_DETECTED
+  }
+  enum stepper_direction {
+  	STEPPER_DIRECTION_NEGATIVE
+  	STEPPER_DIRECTION_POSITIVE
+  }
+
+  enum stepper_drv_micro_step_resolution {
+    STEPPER_DRV_MICRO_STEP_1
+    STEPPER_DRV_MICRO_STEP_2
+    STEPPER_DRV_MICRO_STEP_4
+    STEPPER_DRV_MICRO_STEP_8
+    STEPPER_DRV_MICRO_STEP_16
+    STEPPER_DRV_MICRO_STEP_32
+    STEPPER_DRV_MICRO_STEP_64
+    STEPPER_DRV_MICRO_STEP_128
+    STEPPER_DRV_MICRO_STEP_256
+  }
+
+  interface "stepper_api" {
+   +enable()
+   +disable()
+   +set_microstep_resolution()
+   +get_microstep_resolution()
+    +move_to()
+    +move_by()
+    +run()
+    +stop()
+    +get_actual_position()
+    +set_reference_position()
+    +is_moving()
+    +set_microstep_interval()
+    +set_event_cb()
+  }
+
+  class StepperDevice {
+    <<device_api: stepper_api>>
+  }
+}
+
+StepperDevice -left-|> stepper_api
+
+stepper_api -left-> stepper_event : uses
+stepper_api -up-> stepper_direction : uses
+stepper_api -down-> stepper_drv_micro_step_resolution: uses
+@enduml

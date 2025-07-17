@@ -1,0 +1,4 @@
+config STEPPER_CONTROL
+    bool "Support for stepper_control library"
+    help
+      This option enables the 'stepper_control' library

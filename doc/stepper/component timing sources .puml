@@ -1,0 +1,29 @@
+@startuml
+skinparam componentStyle rectangle
+
+' Customize arrow appearance
+skinparam arrow {
+    Color #233746
+    Thickness 2
+}
+
+package "Step-Dir Stepper Drivers" {
+  [DRV8424 Driver] as tmc2209 <<component>>
+  [Step-Dir Stepper Common] as step_dir_common <<component>>
+  [Stepper Timing Source API] as timing_api <<interface>>
+  [Work-based Timing Source] as work_timing <<component>>
+  [Counter-based Timing Source] as counter_timing <<component>>
+}
+
+tmc2209 --> step_dir_common :  depends on
+step_dir_common --> timing_api : uses
+work_timing -up-> timing_api : implements
+counter_timing -up-> timing_api : implements
+note left of counter_timing
+More accurate timing at higher speeds
+end note
+
+note right of work_timing
+Less accurate at higher speeds
+end note
+@enduml

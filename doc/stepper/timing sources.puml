@@ -1,0 +1,85 @@
+@startuml
+interface "stepper_timing_source_api" {
+  +init(dev)
+  +update(dev, microstep_interval_ns)
+  +start(dev)
+  +needs_reschedule(dev)
+  +stop(dev)
+  +is_running(dev)
+}
+
+class "step_dir_stepper_common_config" {
+  +step_pin: gpio_dt_spec
+  +dir_pin: gpio_dt_spec
+  +timing_source: stepper_timing_source_api*
+  +counter: device*
+  +invert_direction: bool
+}
+
+class "step_dir_stepper_common_data" {
+  +dev: device*
+  +lock: k_spinlock
+  +direction: stepper_direction
+  +run_mode: stepper_run_mode
+  +microstep_interval_ns: uint64_t
+  +step_count: int32_t
+  +stepper_dwork: k_work_delayable
+  +counter_top_cfg: counter_top_cfg
+  +counter_running: bool
+}
+
+class "step_work_timing_source" {
+  +init()
+  +update()
+  +start()
+  +needs_reschedule()
+  +stop()
+  +is_running()
+}
+
+class "step_counter_timing_source" {
+  +init()
+  +update()
+  +start()
+  +needs_reschedule()
+  +stop()
+  +is_running()
+}
+
+package "TMC2209 Stepper Driver Implementation" {
+  class "tmc2209_config" {
+    +common: step_dir_stepper_common_config
+    +enable_pin: gpio_dt_spec
+    +driver specific pins/config
+  }
+
+  class "tmc2209_data" {
+    +common: step_dir_stepper_common_data
+    +driver specific state
+  }
+}
+
+step_dir_stepper_common_config o-- stepper_timing_source_api
+stepper_timing_source_api <|.left. step_work_timing_source
+stepper_timing_source_api <|.right. step_counter_timing_source
+
+tmc2209_config *-- step_dir_stepper_common_config
+tmc2209_data *-- step_dir_stepper_common_data
+
+note bottom of stepper_timing_source_api
+  New API introduced in PR #83342
+  Provides abstraction for timing control
+end note
+
+note right of step_counter_timing_source
+  New implementation using hardware counter
+  - More accurate timing at higher speeds
+  - No need for rescheduling
+end note
+
+note left of step_work_timing_source
+  Original implementation using k_work_delayable
+  - Less accurate at higher speeds
+  - Requires rescheduling for each step
+end note
+@enduml

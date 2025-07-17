@@ -19,3 +19,7 @@ manifest:
         name-allowlist:
           - cmsis_6    # required by the ARM port for Cortex-M
           - hal_stm32  # required by the nucleo_f302r8 board (STM32 based)
+    - name: lx200-parser
+      url: https://github.com/jilaypandya/lx200
+      revision: develop
+      path: modules/lib/lx200-parser

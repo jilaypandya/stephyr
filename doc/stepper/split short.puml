@@ -1,0 +1,72 @@
+@startuml
+skinparam componentStyle rectangle
+
+package "Stepper Driver Subsystem" {
+  [Stepper API] as stepper_api <<component>>
+  [Stepper Driver API] as stepper_drv_api <<component>>
+  [StepperMotionControllerDevice] <<component>>
+  [StepperDriverDevice] <<component>>
+}
+
+stepper_api -[hidden]-> stepper_drv_api
+
+
+StepperMotionControllerDevice --> stepper_api : implements
+StepperDriverDevice --> stepper_drv_api : implements
+StepperMotionControllerDevice ..> StepperDriverDevice : might use
+
+@enduml
+
+@startuml
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+
+package "Stepper Driver Subsystem" {
+  interface "stepper_api" {
+    +move_to()
+    +move_by()
+    +run()
+    +stop()
+    +get_actual_position()
+    +set_reference_position()
+    +is_moving()
+    +set_microstep_interval()
+    +set_event_cb()
+  }
+
+  interface "stepper_drv_api" {
+    +enable()
+    +disable()
+    +set_microstep_resolution()
+    +get_microstep_resolution()
+    +step()
+    +set_direction()
+    +set_event_cb()
+  }
+
+  class StepperMotionControllerDevice {
+    <<device_api: stepper_api>>
+  }
+
+  class StepperDriverDevice {
+    <<device_api: stepper_drv_api>>
+  }
+}
+
+
+note right of StepperMotionControllerDevice <font size=20> "Motion Controller Devices \n e.g. tmc429 \nCPU-based controllers \n e.g. zephyr-stepper-motion-controller" as N1
+
+note right of StepperDriverDevice <font size=20> "Devices with integrated motion controller + stepper driver \n e.g. tmc50xx, tmc51xx" as N3
+
+note right of StepperDriverDevice <font size=20> "Hardware drivers\ne.g.a4979, drv84xx, h-bridge-stepper" as N2
+
+StepperMotionControllerDevice .right.> N1
+StepperMotionControllerDevice .right.> N3
+StepperDriverDevice .right.> N2
+StepperDriverDevice ..> N3
+
+StepperDriverDevice -left-|> stepper_drv_api
+StepperMotionControllerDevice -left-|> stepper_api
+
+StepperMotionControllerDevice ..> StepperDriverDevice : might use
+@enduml
