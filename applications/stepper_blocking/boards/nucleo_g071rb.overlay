@@ -21,9 +21,7 @@
 		en-gpios = <&gpioa 6 GPIO_ACTIVE_HIGH>;		/* D12 */
 		step-gpios = <&gpioa 9 GPIO_ACTIVE_HIGH>;	/* D8 */
 		dir-gpios = <&gpioc 7 GPIO_ACTIVE_HIGH>;	/* D9 */
-		step-width-ns = <100>;
-		step-dir-transition-time-ns = <0>;
-		dual-edge-step;
 		counter = <&counter>;
+		dual-edge-step;
 	};
 };
