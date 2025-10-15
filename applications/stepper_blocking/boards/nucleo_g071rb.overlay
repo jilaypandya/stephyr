@@ -22,6 +22,5 @@
 		step-gpios = <&gpioa 9 GPIO_ACTIVE_HIGH>;	/* D8 */
 		dir-gpios = <&gpioc 7 GPIO_ACTIVE_HIGH>;	/* D9 */
 		counter = <&counter>;
-		dual-edge-step;
 	};
 };
