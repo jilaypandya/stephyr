@@ -28,14 +28,22 @@ int main(void)
 	const struct device *dev = DEVICE_DT_GET(DT_ALIAS(stepper));
 	stepper_set_microstep_interval(dev, 10000000);
 	stepper_set_event_callback(dev, stepper_print_event_callback, NULL );
+	int32_t pos;
+	LOG_INF("Starting tmc50xx stepper sample");
+	k_sleep(K_MSEC(1000));
+
 	while (1) {
-		int32_t pos;
-		stepper_move_by(dev, 10);
-		k_sleep(K_MSEC(1000));
 		stepper_move_by(dev, -10);
 		stepper_stop(dev);
-		//stepper_get_actual_position(dev, &pos);
-		//LOG_INF("pos: %d", pos);
+		stepper_get_actual_position(dev, &pos);
+	}
+	while (1) {
+		stepper_move_by(dev, 10);
+		k_sleep(K_MSEC(100));
+		stepper_move_by(dev, -10);
+		stepper_stop(dev);
+		stepper_get_actual_position(dev, &pos);
+		LOG_INF("pos: %d", pos);
 		k_sleep(K_MSEC(1000));
 	}
 
