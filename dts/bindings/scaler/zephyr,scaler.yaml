@@ -1,0 +1,14 @@
+# Copyright (c) 2024 Jilay Sandeep Pandya
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  An example scaler 
+
+compatible: "zephyr,scaler"
+
+include: base.yaml
+
+properties:
+  scaling-factor:
+    type: int
+    required: true

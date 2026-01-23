@@ -1,0 +1,7 @@
+# Copyright (c) 2024 Jilay Sandeep Pandya
+# SPDX-License-Identifier: Apache-2.0
+
+config ZEPHYR_SCALER
+	bool "Zephyr Scaler Driver"
+	default y
+	depends on DT_HAS_ZEPHYR_SCALER_ENABLED

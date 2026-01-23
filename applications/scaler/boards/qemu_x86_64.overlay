@@ -1,0 +1,12 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2024 Jilay Sandeep Pandya
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/ {
+	scaler: zephyr_scaler {
+		compatible = "zephyr,scaler";
+		status = "okay";
+        scaling-factor = <1>;
+	};
+};

@@ -1,0 +1,23 @@
+# Copyright (c) 2026 Jilay Sandeep Pandya
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig SCALER
+	bool "Scaler device drivers"
+	help
+	  This option enables the scaler custom driver class.
+
+if SCALER
+
+config SCALER_INIT_PRIORITY
+	int "Scaler device drivers init priority"
+	default KERNEL_INIT_PRIORITY_DEVICE
+	help
+	  Scaler device drivers init priority.
+
+module = SCALER
+module-str = scaler
+source "subsys/logging/Kconfig.template.log_config"
+
+rsource "Kconfig.zephyr_scaler"
+
+endif # SCALER
