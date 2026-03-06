@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
+# SPDX-License-Identifier: Apache-2.0
+
+rsource "can_uart_replay/Kconfig"

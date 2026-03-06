@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
+# SPDX-License-Identifier: Apache-2.0
+
+config CAN_UART_REPLAY
+	bool "CAN UART replay subsystem"
+	select CAN
+	select UART
+	help
+	  Enable the CAN UART replay subsystem. This subsystem allows replaying CAN frames received over UART. It is designed to facilitate testing and debugging of CAN applications by providing a means to replay captured CAN traffic.
+
+if CAN_UART_REPLAY
+
+config CAN_UART_REPLAY_THREAD_STACK_SIZE
+	int "CAN RX thread stack size"
+	default 1024
+	help
+	  Stack size for the CAN RX listener thread.
+
+config CAN_UART_REPLAY_THREAD_PRIORITY
+	int "CAN RX thread priority"
+	default 5
+	help
+	  Cooperative or preemptive priority for the CAN RX listener thread.
+
+# ---------------------------------------------------------------------------
+# Optional start / stop trigger IDs
+# ---------------------------------------------------------------------------
+
+config CAN_UART_REPLAY_START_ID
+	hex "RX start-trigger CAN ID"
+	default 0xFFFF
+	range 0x000 0xFFFF
+	help
+	  11-bit standard CAN ID that triggers the start of frame printing.
+	  Default value 0xFFFF means no start trigger: printing begins immediately
+	  at boot.
+
+config CAN_UART_REPLAY_STOP_ID
+	hex "RX stop-trigger CAN ID"
+	default 0xFFFF
+	range 0x000 0xFFFF
+	help
+	  11-bit standard CAN ID that halts frame printing permanently.
+	  Default value 0xFFFF means no stop trigger: printing continues
+	  indefinitely unless the system is halted.
+
+config CAN_UART_REPLAY_HELLO_SPECIALIZED_ID
+	hex "RX hello-specialized CAN ID"
+	default 0xFFFF
+	range 0x000 0xFFFF
+	help
+	  11-bit standard CAN ID that, when received, prints "hello specialized"
+	  to UART and log. Default value 0xFFFF means this trigger is disabled.
+
+# ---------------------------------------------------------------------------
+# RX filter
+# ---------------------------------------------------------------------------
+
+config CAN_UART_REPLAY_FILTER_ID
+	hex "RX filter CAN ID"
+	default 0x000
+	range 0x000 0x7FF
+	help
+	  11-bit standard CAN ID used in the hardware RX filter.  A frame is
+	  accepted when (frame.id & CAN_UART_REPLAY_FILTER_MASK) ==
+	  (CAN_UART_REPLAY_FILTER_ID & CAN_UART_REPLAY_FILTER_MASK).
+	  The default value 0x000 combined with mask 0x000 accepts every frame.
+
+config CAN_UART_REPLAY_FILTER_MASK
+	hex "RX filter ID mask (0x000 = accept all)"
+	default 0x000
+	range 0x000 0x7FF
+	help
+	  Bits set to 1 are checked against CAN_UART_REPLAY_FILTER_ID.
+	  0x000 — accept all standard frames (no bits checked).
+	  0x7FF — exact match on the full 11-bit ID.
+	  Power-of-two-aligned ranges are also possible, e.g. 0x700 accepts
+	  IDs 0x100–0x1FF when filter ID is 0x100.
+
+module = CAN_UART_REPLAY
+module-str = can_uart_replay
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # CAN_UART_REPLAY
