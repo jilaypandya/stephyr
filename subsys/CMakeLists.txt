@@ -1,0 +1,2 @@
+
+add_subdirectory_ifdef(CONFIG_CAN_UART_REPLAY can_uart_replay)

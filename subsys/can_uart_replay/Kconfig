@@ -1,0 +1,26 @@
+config CAN_UART_REPLAY
+	bool "CAN UART replay subsystem"
+	select CAN
+	select UART
+	help
+	  Enable the CAN UART replay subsystem. This subsystem allows replaying CAN frames received over UART. It is designed to facilitate testing and debugging of CAN applications by providing a means to replay captured CAN traffic.
+
+if CAN_UART_REPLAY
+
+config CAN_UART_REPLAY_THREAD_STACK_SIZE
+	int "CAN RX thread stack size"
+	default 1024
+	help
+	  Stack size for the CAN RX listener thread.
+
+config CAN_UART_REPLAY_THREAD_PRIORITY
+	int "CAN RX thread priority"
+	default 5
+	help
+	  Cooperative or preemptive priority for the CAN RX listener thread.
+
+module = CAN_UART_REPLAY
+module-str = can_uart_replay
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # CAN_UART_REPLAY
