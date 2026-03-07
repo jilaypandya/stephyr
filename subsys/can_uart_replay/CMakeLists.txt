@@ -4,3 +4,4 @@
 zephyr_library()
 zephyr_library_sources_ifdef(CONFIG_CAN_UART_REPLAY can_uart_replay.c)
 zephyr_linker_sources_ifdef(CONFIG_CAN_UART_REPLAY ROM_SECTIONS can_uart_replay.ld)
+zephyr_library_sources_ifdef(CONFIG_CAN_RANDOM_TRAFFIC can_random_traffic.c)
