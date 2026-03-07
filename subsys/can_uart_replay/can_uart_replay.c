@@ -5,6 +5,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/init.h>
 #include <stdio.h>
+#include <string.h>
 
 LOG_MODULE_REGISTER(can_uart_replay, CONFIG_CAN_UART_REPLAY_LOG_LEVEL);
 
@@ -21,6 +22,25 @@ static const struct can_filter can_rx_filter = {
 
 static const struct device *uart_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_uart_can));
 
+/**
+ * @brief Format millisecond uptime into "hh:mm:ss.mmm" in @p buf.
+ *
+ * @param buf     Output buffer (must be at least 13 bytes: "hh:mm:ss.mmm\0").
+ * @param buf_len Size of @p buf.
+ * @param uptime_ms Uptime in milliseconds (from k_uptime_get()).
+ */
+static void format_uptime_hms(char *buf, size_t buf_len, int64_t uptime_ms)
+{
+	int32_t ms  = (int32_t)(uptime_ms % 1000);
+	int64_t sec = uptime_ms / 1000;
+	int32_t s   = (int32_t)(sec % 60);
+	int64_t min = sec / 60;
+	int32_t m   = (int32_t)(min % 60);
+	int32_t h   = (int32_t)(min / 60);
+
+	snprintf(buf, buf_len, "%02d:%02d:%02d.%03d", h, m, s, ms);
+}
+
 static void uart_write_str(const char *str)
 {
 	while (*str) {
@@ -31,12 +51,19 @@ static void uart_write_str(const char *str)
 static void can_rx_thread(void *arg1, void *arg2, void *arg3)
 {
 	struct can_frame frame;
-	char line[80];
+	char timestamp[13]; /* "hh:mm:ss.mmm\0" */
+	char line[96];
 	int err;
 
 	ARG_UNUSED(arg1);
 	ARG_UNUSED(arg2);
 	ARG_UNUSED(arg3);
+
+	/*
+	 * 0xFFFF is the sentinel meaning "not configured".
+	 * printing_active starts false only when a real start-trigger ID is set.
+	 */
+	bool printing_active = (CONFIG_CAN_UART_REPLAY_START_ID == 0xFFFF);
 
 	while (true) {
 		err = k_msgq_get(&can_rx_msgq, &frame, K_FOREVER);
@@ -45,17 +72,38 @@ static void can_rx_thread(void *arg1, void *arg2, void *arg3)
 			continue;
 		}
 
-		LOG_INF("RX id=0x%03x dlc=%u flags=0x%02x"
-			" data=%02x %02x %02x %02x %02x %02x %02x %02x",
-			frame.id, frame.dlc, frame.flags,
-			frame.data[0], frame.data[1], frame.data[2], frame.data[3],
-			frame.data[4], frame.data[5], frame.data[6], frame.data[7]);
+		/* --- start trigger ---------------------------------------- */
+		if (frame.id == CONFIG_CAN_UART_REPLAY_START_ID) {
+			printing_active = true;
+			LOG_INF("Start trigger received (id=0x%03x), printing enabled",
+				frame.id);
+		}
+
+		/* --- stop trigger ----------------------------------------- */
+		if (frame.id == CONFIG_CAN_UART_REPLAY_STOP_ID) {
+			printing_active = false;
+			LOG_INF("Stop trigger received (id=0x%03x), printing disabled",
+				frame.id);
+		}
+
+		if (!printing_active) {
+			LOG_INF("Frame received (id=0x%03x) but printing is disabled, ignoring",
+				frame.id);
+			continue;
+		}
+
+		format_uptime_hms(timestamp, sizeof(timestamp), k_uptime_get());
+
+		LOG_HEXDUMP_INF(frame.data, frame.dlc, "RX");
 
 		snprintf(line, sizeof(line),
-			 "RX id=0x%03x dlc=%u data=%02x %02x %02x %02x %02x %02x %02x %02x\r\n",
+			 "[%s] RX id=0x%03x dlc=%u"
+			 " data=%02x %02x %02x %02x %02x %02x %02x %02x\r\n",
+			 timestamp,
 			 frame.id, frame.dlc,
 			 frame.data[0], frame.data[1], frame.data[2], frame.data[3],
 			 frame.data[4], frame.data[5], frame.data[6], frame.data[7]);
+		LOG_INF("%s", line);
 		uart_write_str(line);
 	}
 }

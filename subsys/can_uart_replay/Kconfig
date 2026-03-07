@@ -19,6 +19,28 @@ config CAN_UART_REPLAY_THREAD_PRIORITY
 	help
 	  Cooperative or preemptive priority for the CAN RX listener thread.
 
+# ---------------------------------------------------------------------------
+# Optional start / stop trigger IDs
+# ---------------------------------------------------------------------------
+
+config CAN_UART_REPLAY_START_ID
+	hex "RX start-trigger CAN ID"
+	default 0xFFFF
+	range 0x000 0xFFFF
+	help
+	  11-bit standard CAN ID that triggers the start of frame printing.
+	  Default value 0xFFFF means no start trigger: printing begins immediately
+	  at boot.
+
+config CAN_UART_REPLAY_STOP_ID
+	hex "RX stop-trigger CAN ID"
+	default 0xFFFF
+	range 0x000 0xFFFF
+	help
+	  11-bit sta-undard CAN ID that halts frame printing permanently.
+	  Default value 0xFFFF means no stop trigger: printing continues
+	  indefinitely unless the system is halted.
+
 rsource "Kconfig.can_random_traffic"
 
 module = CAN_UART_REPLAY

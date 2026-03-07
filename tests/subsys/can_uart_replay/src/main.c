@@ -22,6 +22,11 @@ static const struct can_frame test_frame = {
 	.data  = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
 };
 
+/* -------------------------------------------------------------------------
+ * Shared helpers
+ * -------------------------------------------------------------------------
+ */
+
 /* Read up to buf_len-1 chars from uart_dev until '\n' or timeout. */
 static int uart_read_line(char *buf, size_t buf_len, k_timeout_t timeout)
 {
@@ -47,56 +52,93 @@ static int uart_read_line(char *buf, size_t buf_len, k_timeout_t timeout)
 	return pos;
 }
 
-static void *can_uart_replay_setup(void)
+/* Discard every byte currently in the UART emulator RX FIFO. */
+static void uart_drain(void)
+{
+	unsigned char c;
+
+	while (uart_poll_in(uart_dev, &c) == 0) {
+	}
+}
+
+/* Send a frame and sleep long enough for the subsystem thread to process it. */
+static void send_frame(const struct can_frame *f)
+{
+	int err = can_send(can_dev, f, K_MSEC(100), NULL, NULL);
+
+	zassert_ok(err, "can_send id=0x%03x failed (err %d)", f->id, err);
+	k_sleep(K_MSEC(500));
+}
+
+/* Send a zero-DLC frame with the given CAN ID (used for trigger frames). */
+static void send_trigger(uint32_t id)
+{
+	const struct can_frame trigger = {
+		.flags = 0,
+		.id    = id,
+		.dlc   = 0,
+	};
+
+	send_frame(&trigger);
+}
+
+/* Common hardware bring-up used by both suites. */
+static void hw_setup(void)
 {
 	int err;
 
 	zassert_true(device_is_ready(can_dev),  "CAN device not ready");
 	zassert_true(device_is_ready(uart_dev), "UART device not ready");
 
-	/* Stop the controller (started by the subsystem SYS_INIT),
-	 * switch to loopback mode so TX frames are echoed to RX filters,
-	 * then restart. */
 	(void)can_stop(can_dev);
-
 	err = can_set_mode(can_dev, CAN_MODE_LOOPBACK);
 	zassert_ok(err, "failed to set CAN loopback mode (err %d)", err);
-
 	err = can_start(can_dev);
 	zassert_ok(err, "failed to restart CAN controller (err %d)", err);
+}
 
+/* =========================================================================
+ * Suite: can_uart_replay  (scenario: can_uart_replay.default)
+ *
+ * No start/stop triggers — printing begins immediately and runs forever.
+ * =========================================================================
+ */
+
+static void *default_setup(void *f)
+{
+	ARG_UNUSED(f);
+	hw_setup();
 	return NULL;
 }
 
-static void can_uart_replay_teardown(void *fixture)
+static void default_before(void *f)
 {
-	ARG_UNUSED(fixture);
-	(void)can_stop(can_dev);
+	ARG_UNUSED(f);
+	uart_drain();
 }
 
-ZTEST_SUITE(can_uart_replay, NULL,
-	    can_uart_replay_setup,
-	    NULL,
-	    NULL,
-	    can_uart_replay_teardown);
+ZTEST_SUITE(can_uart_replay, NULL, default_setup, default_before, NULL, NULL);
 
+/* Smoke-test: 10 frames are sent without error. */
 ZTEST(can_uart_replay, test_send)
 {
-	int err;
-
 	for (int i = 0; i < 10; i++) {
-		err = can_send(can_dev, &test_frame, K_MSEC(100), NULL, NULL);
+		int err = can_send(can_dev, &test_frame, K_MSEC(100), NULL, NULL);
+
 		zassert_ok(err, "failed to send CAN frame %d (err %d)", i, err);
 	}
 }
 
+/* A sent frame must appear on the UART immediately (no trigger required). */
 ZTEST(can_uart_replay, test_uart_output)
 {
+	if (CONFIG_CAN_UART_REPLAY_START_ID != 0xFFFF) {
+		ztest_test_skip();
+	}
+
 	char expected[80];
 	char line[80];
-	int err;
 
-	/* Build the exact line the subsystem formats */
 	snprintf(expected, sizeof(expected),
 		 "RX id=0x%03x dlc=%u data=%02x %02x %02x %02x %02x %02x %02x %02x\r\n",
 		 test_frame.id, test_frame.dlc,
@@ -105,16 +147,126 @@ ZTEST(can_uart_replay, test_uart_output)
 		 test_frame.data[4], test_frame.data[5],
 		 test_frame.data[6], test_frame.data[7]);
 
-	err = can_send(can_dev, &test_frame, K_MSEC(100), NULL, NULL);
-	zassert_ok(err, "failed to send CAN frame (err %d)", err);
-
-	/* Give the subsystem thread time to dequeue and write to UART */
-	k_sleep(K_MSEC(50));
+	send_frame(&test_frame);
 
 	int len = uart_read_line(line, sizeof(line), K_MSEC(200));
 
 	zassert_true(len > 0, "no UART output received");
-	zassert_mem_equal(line, expected, strlen(expected),
-			  "UART output mismatch\n  got:      '%s'\n  expected: '%s'",
-			  line, expected);
+	zassert_not_null(strstr(line, expected),
+			 "UART output mismatch\n  got:      '%s'\n  want suffix: '%s'",
+			 line, expected);
+}
+
+/* =========================================================================
+ * Suite: can_uart_replay_triggers  (scenario: can_uart_replay.start_stop)
+ *
+ * Printing is gated by a start-trigger ID (0x100) and latched off by a
+ * stop-trigger ID (0x200).
+ * =========================================================================
+ */
+
+static void *triggers_setup(void *f)
+{
+	ARG_UNUSED(f);
+	hw_setup();
+	return NULL;
+}
+
+static void triggers_before(void *f)
+{
+	ARG_UNUSED(f);
+	uart_drain();
+}
+
+ZTEST_SUITE(can_uart_replay_triggers, NULL, triggers_setup, triggers_before, NULL, NULL);
+
+/*
+ * test_no_output_before_start
+ *
+ * Frames received before the start-trigger ID arrive must not produce any
+ * UART output.
+ */
+ZTEST(can_uart_replay_triggers, test_no_output_before_start)
+{
+	if (CONFIG_CAN_UART_REPLAY_START_ID == 0xFFFF) {
+		ztest_test_skip();
+	}
+
+	char line[80];
+
+	send_frame(&test_frame);
+
+	int len = uart_read_line(line, sizeof(line), K_MSEC(100));
+
+	zassert_equal(len, 0,
+		      "expected silence before start trigger, got '%s'", line);
+}
+
+/*
+ * test_output_after_start
+ *
+ * Frames received after the start-trigger ID must be printed on UART.
+ */
+ZTEST(can_uart_replay_triggers, test_output_after_start)
+{
+	if (CONFIG_CAN_UART_REPLAY_START_ID == 0xFFFF) {
+		ztest_test_skip();
+	}
+
+	char expected[80];
+	char line[80];
+
+	snprintf(expected, sizeof(expected),
+		 "RX id=0x%03x dlc=%u data=%02x %02x %02x %02x %02x %02x %02x %02x\r\n",
+		 test_frame.id, test_frame.dlc,
+		 test_frame.data[0], test_frame.data[1],
+		 test_frame.data[2], test_frame.data[3],
+		 test_frame.data[4], test_frame.data[5],
+		 test_frame.data[6], test_frame.data[7]);
+
+	send_trigger(CONFIG_CAN_UART_REPLAY_START_ID);
+	uart_drain(); /* discard any log line emitted for the trigger itself */
+
+	send_frame(&test_frame);
+
+	int len = uart_read_line(line, sizeof(line), K_MSEC(200));
+
+	zassert_true(len > 0, "expected UART output after start trigger, got none");
+	zassert_not_null(strstr(line, expected),
+			 "UART output mismatch\n  got:      '%s'\n  want suffix: '%s'",
+			 line, expected);
+}
+
+/*
+ * test_no_output_after_stop
+ *
+ * Once the stop-trigger ID is received, all subsequent frames must be
+ * suppressed permanently.
+ */
+ZTEST(can_uart_replay_triggers, test_no_output_after_stop)
+{
+	if (CONFIG_CAN_UART_REPLAY_START_ID == 0xFFFF ||
+	    CONFIG_CAN_UART_REPLAY_STOP_ID  == 0xFFFF) {
+		ztest_test_skip();
+	}
+
+	char line[80];
+
+	/* Activate printing first. */
+	send_trigger(CONFIG_CAN_UART_REPLAY_START_ID);
+	uart_drain();
+
+	/* Now latch it off. */
+	send_trigger(CONFIG_CAN_UART_REPLAY_STOP_ID);
+	uart_drain();
+
+	/* Send multiple data frames — none should appear on UART. */
+	for (int i = 0; i < 3; i++) {
+		send_frame(&test_frame);
+	}
+
+	int len = uart_read_line(line, sizeof(line), K_MSEC(100));
+
+	zassert_equal(len, 0,
+		      "expected silence after stop trigger, got '%s'", line);
 }
