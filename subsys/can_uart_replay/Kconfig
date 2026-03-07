@@ -19,6 +19,8 @@ config CAN_UART_REPLAY_THREAD_PRIORITY
 	help
 	  Cooperative or preemptive priority for the CAN RX listener thread.
 
+rsource "Kconfig.can_random_traffic"
+
 module = CAN_UART_REPLAY
 module-str = can_uart_replay
 source "subsys/logging/Kconfig.template.log_config"

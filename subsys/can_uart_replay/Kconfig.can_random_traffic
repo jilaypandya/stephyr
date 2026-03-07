@@ -1,0 +1,48 @@
+# ---------------------------------------------------------------------------
+# Random traffic generator
+# ---------------------------------------------------------------------------
+
+config CAN_RANDOM_TRAFFIC
+	bool "Generate random CAN traffic"
+	select ENTROPY_GENERATOR
+	select TEST_RANDOM_GENERATOR
+	help
+	  When enabled, the subsystem transmits randomly generated CAN frames
+	  at random intervals to exercise the bus.
+
+# ---------------------------------------------------------------------------
+# Periodic TX schedule (fixed slots, up to 3)
+# ---------------------------------------------------------------------------
+
+if CAN_RANDOM_TRAFFIC
+
+config CAN_RAND_TX_MSG_COUNT
+	int "Number of periodic CAN TX messages"
+	default 0
+	range 0 3
+	help
+	  How many periodic TX schedule entries are active (0 disables TX).
+	  Configure each active slot below (MSG0 … MSG2).
+
+# --- Slot 0 ---
+if CAN_RAND_TX_MSG_COUNT >= 1
+module = CAN_RAND_TX_MSG0
+module-str = "CAN TX message 0"
+rsource "Kconfig.template.can_tx_schedule"
+endif
+
+# --- Slot 1 ---
+if CAN_RAND_TX_MSG_COUNT >= 2
+module = CAN_RAND_TX_MSG1
+module-str = "CAN TX message 1"
+rsource "Kconfig.template.can_tx_schedule"
+endif
+
+# --- Slot 2 ---
+if CAN_RAND_TX_MSG_COUNT >= 3
+module = CAN_RAND_TX_MSG2
+module-str = "CAN TX message 2"
+rsource "Kconfig.template.can_tx_schedule"
+endif
+
+endif # CAN_RANDOM_TRAFFIC

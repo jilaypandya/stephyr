@@ -1,0 +1,20 @@
+# Kconfig.template.can_tx_schedule
+#
+# Template for a single periodic CAN TX schedule entry.
+#
+# Required variables (set before sourcing this template):
+#   module      - unique prefix for the generated symbols, e.g. CAN_UART_REPLAY_TX_MSG0
+#   module-str  - human-readable label,          e.g. "CAN TX message 0"
+
+config $(module)_ID
+	hex "$(module-str) CAN ID"
+	range 0x000 0x7FF
+	help
+	  11-bit standard CAN ID for this periodic TX schedule entry.
+
+config $(module)_PERIOD_MS
+	int "$(module-str) period (ms)"
+	default 1000
+	range 1 3600000
+	help
+	  Transmission interval in milliseconds for this periodic TX schedule entry.
