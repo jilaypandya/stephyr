@@ -1,0 +1,511 @@
+From 581644b6fb26eb424a6286e351b12a0c318f3434 Mon Sep 17 00:00:00 2001
+From: Jilay Pandya <jilay.pandya@outlook.com>
+Date: Fri, 6 Mar 2026 18:16:33 +0100
+Subject: [PATCH 1/5] feat: add can uart replay subsystem
+
+Signed-off-by: Jilay Pandya <jilay.pandya@outlook.com>
+---
+ CMakeLists.txt                            |   1 +
+ Kconfig                                   |   1 +
+ include/utils/format_can.h                |  54 ++++++
+ include/utils/format_time.h               |  32 ++++
+ subsys/CMakeLists.txt                     |   4 +
+ subsys/Kconfig                            |   4 +
+ subsys/can_uart_replay/CMakeLists.txt     |   6 +
+ subsys/can_uart_replay/Kconfig            |  84 +++++++++
+ subsys/can_uart_replay/can_uart_replay.c  | 217 ++++++++++++++++++++++
+ subsys/can_uart_replay/can_uart_replay.ld |  14 ++
+ 10 files changed, 417 insertions(+)
+ create mode 100644 include/utils/format_can.h
+ create mode 100644 include/utils/format_time.h
+ create mode 100644 subsys/CMakeLists.txt
+ create mode 100644 subsys/Kconfig
+ create mode 100644 subsys/can_uart_replay/CMakeLists.txt
+ create mode 100644 subsys/can_uart_replay/Kconfig
+ create mode 100644 subsys/can_uart_replay/can_uart_replay.c
+ create mode 100644 subsys/can_uart_replay/can_uart_replay.ld
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a073494..d142d45 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -13,3 +13,4 @@ zephyr_include_directories(include)
+ 
+ add_subdirectory(drivers)
+ add_subdirectory(lib)
++add_subdirectory(subsys)
+diff --git a/Kconfig b/Kconfig
+index 3bd03f2..b9830f6 100644
+--- a/Kconfig
++++ b/Kconfig
+@@ -7,3 +7,4 @@
+ 
+ rsource "drivers/Kconfig"
+ rsource "lib/Kconfig"
++rsource "subsys/Kconfig"
+diff --git a/include/utils/format_can.h b/include/utils/format_can.h
+new file mode 100644
+index 0000000..4a1587b
+--- /dev/null
++++ b/include/utils/format_can.h
+@@ -0,0 +1,54 @@
++/*
++ * SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#ifndef INCLUDE_UTILS_FORMAT_CAN_H_
++#define INCLUDE_UTILS_FORMAT_CAN_H_
++
++#include <stddef.h>
++#include <stdio.h>
++#include <zephyr/drivers/can.h>
++
++/**
++ * @brief Format the body of a CAN frame RX log entry (no timestamp).
++ *
++ * Produces: "RX id=0x<id> dlc=<n> data=<b0> ... <b7>\r\n"
++ *
++ * Use this to build expected strings in tests or as the inner part of a full
++ * log line via format_can_frame_line().
++ *
++ * @param buf    Output buffer.
++ * @param buf_len Size of @p buf.
++ * @param frame  CAN frame to format.
++ */
++static inline void format_can_frame_body(char *buf, size_t buf_len, const struct can_frame *frame)
++{
++	snprintf(buf, buf_len,
++		 "RX id=0x%03x dlc=%u"
++		 " data=%02x %02x %02x %02x %02x %02x %02x %02x\r\n",
++		 frame->id, frame->dlc, frame->data[0], frame->data[1], frame->data[2],
++		 frame->data[3], frame->data[4], frame->data[5], frame->data[6], frame->data[7]);
++}
++
++/**
++ * @brief Format a CAN frame into a full timestamped UART output line.
++ *
++ * Produces: "[<timestamp>] RX id=0x<id> dlc=<n> data=<b0> ... <b7>\r\n"
++ *
++ * @param buf       Output buffer.
++ * @param buf_len   Size of @p buf.
++ * @param timestamp Null-terminated timestamp string (e.g. from format_uptime_hms()).
++ * @param frame     CAN frame to format.
++ */
++static inline void format_can_frame_line(char *buf, size_t buf_len, const char *timestamp,
++					 const struct can_frame *frame)
++{
++	snprintf(buf, buf_len,
++		 "[%s] RX id=0x%03x dlc=%u"
++		 " data=%02x %02x %02x %02x %02x %02x %02x %02x\r\n",
++		 timestamp, frame->id, frame->dlc, frame->data[0], frame->data[1], frame->data[2],
++		 frame->data[3], frame->data[4], frame->data[5], frame->data[6], frame->data[7]);
++}
++
++#endif /* INCLUDE_UTILS_FORMAT_CAN_H_ */
+diff --git a/include/utils/format_time.h b/include/utils/format_time.h
+new file mode 100644
+index 0000000..c3d0495
+--- /dev/null
++++ b/include/utils/format_time.h
+@@ -0,0 +1,32 @@
++/*
++ * SPDX-FileCopyrightText: Copyright (c) 2024 Jilay Sandeep Pandya
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#ifndef INCLUDE_UTILS_FORMAT_TIME_H_
++#define INCLUDE_UTILS_FORMAT_TIME_H_
++
++#include <stddef.h>
++#include <stdint.h>
++#include <stdio.h>
++
++/** Minimum buffer size required by format_uptime_hms(). */
++#define FORMAT_UPTIME_HMS_LEN 13 /* "hh:mm:ss.mmm\0" */
++
++/**
++ * @brief Format millisecond uptime into "hh:mm:ss.mmm" in @p buf.
++ *
++ * @param buf       Output buffer (must be at least FORMAT_UPTIME_HMS_LEN bytes).
++ * @param uptime_ms Uptime in milliseconds (from k_uptime_get()).
++ */
++static inline void format_uptime_hms(char buf[FORMAT_UPTIME_HMS_LEN], int64_t uptime_ms)
++{
++	uint32_t ms = (uint32_t)(uptime_ms % 1000);
++	uint32_t s = (uint32_t)((uptime_ms / 1000) % 60);
++	uint32_t m = (uint32_t)((uptime_ms / 60000) % 60);
++	uint32_t h = (uint32_t)((uptime_ms / 3600000) % 100); /* clamp to 00-99 */
++
++	snprintf(buf, FORMAT_UPTIME_HMS_LEN, "%02u:%02u:%02u.%03u", h, m, s, ms);
++}
++
++#endif /* INCLUDE_UTILS_FORMAT_TIME_H_ */
+diff --git a/subsys/CMakeLists.txt b/subsys/CMakeLists.txt
+new file mode 100644
+index 0000000..db3eca4
+--- /dev/null
++++ b/subsys/CMakeLists.txt
+@@ -0,0 +1,4 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++# SPDX-License-Identifier: Apache-2.0
++
++add_subdirectory_ifdef(CONFIG_CAN_UART_REPLAY can_uart_replay)
+diff --git a/subsys/Kconfig b/subsys/Kconfig
+new file mode 100644
+index 0000000..0752f73
+--- /dev/null
++++ b/subsys/Kconfig
+@@ -0,0 +1,4 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++# SPDX-License-Identifier: Apache-2.0
++
++rsource "can_uart_replay/Kconfig"
+diff --git a/subsys/can_uart_replay/CMakeLists.txt b/subsys/can_uart_replay/CMakeLists.txt
+new file mode 100644
+index 0000000..bdf6518
+--- /dev/null
++++ b/subsys/can_uart_replay/CMakeLists.txt
+@@ -0,0 +1,6 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++# SPDX-License-Identifier: Apache-2.0
++
++zephyr_library()
++zephyr_library_sources_ifdef(CONFIG_CAN_UART_REPLAY can_uart_replay.c)
++zephyr_linker_sources_ifdef(CONFIG_CAN_UART_REPLAY ROM_SECTIONS can_uart_replay.ld)
+diff --git a/subsys/can_uart_replay/Kconfig b/subsys/can_uart_replay/Kconfig
+new file mode 100644
+index 0000000..de3aadd
+--- /dev/null
++++ b/subsys/can_uart_replay/Kconfig
+@@ -0,0 +1,84 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++# SPDX-License-Identifier: Apache-2.0
++
++config CAN_UART_REPLAY
++	bool "CAN UART replay subsystem"
++	select CAN
++	select UART
++	help
++	  Enable the CAN UART replay subsystem. This subsystem allows replaying CAN frames received over UART. It is designed to facilitate testing and debugging of CAN applications by providing a means to replay captured CAN traffic.
++
++if CAN_UART_REPLAY
++
++config CAN_UART_REPLAY_THREAD_STACK_SIZE
++	int "CAN RX thread stack size"
++	default 1024
++	help
++	  Stack size for the CAN RX listener thread.
++
++config CAN_UART_REPLAY_THREAD_PRIORITY
++	int "CAN RX thread priority"
++	default 5
++	help
++	  Cooperative or preemptive priority for the CAN RX listener thread.
++
++# ---------------------------------------------------------------------------
++# Optional start / stop trigger IDs
++# ---------------------------------------------------------------------------
++
++config CAN_UART_REPLAY_START_ID
++	hex "RX start-trigger CAN ID"
++	default 0xFFFF
++	range 0x000 0xFFFF
++	help
++	  11-bit standard CAN ID that triggers the start of frame printing.
++	  Default value 0xFFFF means no start trigger: printing begins immediately
++	  at boot.
++
++config CAN_UART_REPLAY_STOP_ID
++	hex "RX stop-trigger CAN ID"
++	default 0xFFFF
++	range 0x000 0xFFFF
++	help
++	  11-bit standard CAN ID that halts frame printing permanently.
++	  Default value 0xFFFF means no stop trigger: printing continues
++	  indefinitely unless the system is halted.
++
++config CAN_UART_REPLAY_HELLO_SPECIALIZED_ID
++	hex "RX hello-specialized CAN ID"
++	default 0xFFFF
++	range 0x000 0xFFFF
++	help
++	  11-bit standard CAN ID that, when received, prints "hello specialized"
++	  to UART and log. Default value 0xFFFF means this trigger is disabled.
++
++# ---------------------------------------------------------------------------
++# RX filter
++# ---------------------------------------------------------------------------
++
++config CAN_UART_REPLAY_FILTER_ID
++	hex "RX filter CAN ID"
++	default 0x000
++	range 0x000 0x7FF
++	help
++	  11-bit standard CAN ID used in the hardware RX filter.  A frame is
++	  accepted when (frame.id & CAN_UART_REPLAY_FILTER_MASK) ==
++	  (CAN_UART_REPLAY_FILTER_ID & CAN_UART_REPLAY_FILTER_MASK).
++	  The default value 0x000 combined with mask 0x000 accepts every frame.
++
++config CAN_UART_REPLAY_FILTER_MASK
++	hex "RX filter ID mask (0x000 = accept all)"
++	default 0x000
++	range 0x000 0x7FF
++	help
++	  Bits set to 1 are checked against CAN_UART_REPLAY_FILTER_ID.
++	  0x000 — accept all standard frames (no bits checked).
++	  0x7FF — exact match on the full 11-bit ID.
++	  Power-of-two-aligned ranges are also possible, e.g. 0x700 accepts
++	  IDs 0x100–0x1FF when filter ID is 0x100.
++
++module = CAN_UART_REPLAY
++module-str = can_uart_replay
++source "subsys/logging/Kconfig.template.log_config"
++
++endif # CAN_UART_REPLAY
+diff --git a/subsys/can_uart_replay/can_uart_replay.c b/subsys/can_uart_replay/can_uart_replay.c
+new file mode 100644
+index 0000000..1a1bf34
+--- /dev/null
++++ b/subsys/can_uart_replay/can_uart_replay.c
+@@ -0,0 +1,217 @@
++/*
++ * SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#include <zephyr/kernel.h>
++#include <zephyr/device.h>
++#include <zephyr/drivers/can.h>
++#include <zephyr/drivers/uart.h>
++#include <zephyr/logging/log.h>
++#include <zephyr/init.h>
++#include <zephyr/sys/iterable_sections.h>
++#include <stdio.h>
++#include <string.h>
++#include <utils/format_time.h>
++#include <utils/format_can.h>
++
++LOG_MODULE_REGISTER(can_uart_replay, CONFIG_CAN_UART_REPLAY_LOG_LEVEL);
++
++#define CAN_RX_MSGQ_MAX_FRAMES 16
++
++CAN_MSGQ_DEFINE(can_rx_msgq, CAN_RX_MSGQ_MAX_FRAMES);
++
++/* RX filter — standard 11-bit IDs only; ID and mask controlled via Kconfig.
++ * Trigger IDs (start/stop/hello) are ORed into the mask at init time so they
++ * always pass the hardware filter regardless of the user-configured range.
++ */
++static struct can_filter can_rx_filter = {
++	.id = CONFIG_CAN_UART_REPLAY_FILTER_ID,
++	.mask = CONFIG_CAN_UART_REPLAY_FILTER_MASK,
++	.flags = 0,
++};
++
++static const struct device *uart_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_uart_can));
++
++static void uart_write_str(const char *str)
++{
++	while (*str) {
++		uart_poll_out(uart_dev, *str++);
++	}
++}
++
++/* -------------------------------------------------------------------------
++ * CAN ID handler table — iterable section
++ * -------------------------------------------------------------------------
++ * Each entry binds one CAN ID (0xFFFF = disabled) to a handler function.
++ * The handler returns true if it consumed the frame (no further processing),
++ * false to fall through to the normal RX print path.
++ */
++
++static bool printing_active = (CONFIG_CAN_UART_REPLAY_START_ID == 0xFFFF);
++
++typedef bool (*can_id_handler_fn)(const struct can_frame *frame);
++
++struct can_id_handler {
++	uint32_t id;
++	can_id_handler_fn fn;
++};
++
++/* Register entries in the iterable section. */
++#define CAN_ID_HANDLER_DEFINE(name, _id, _fn)                                                      \
++	STRUCT_SECTION_ITERABLE(can_id_handler, name) = {.id = (_id), .fn = (_fn)}
++
++#if CONFIG_CAN_UART_REPLAY_HELLO_SPECIALIZED_ID != 0xFFFF
++/* --- hello specialized -------------------------------------------------- */
++static bool handle_hello_specialized(const struct can_frame *frame)
++{
++	char line[32];
++
++	snprintf(line, sizeof(line), "hello specialized id=0x%03x\r\n", frame->id);
++	LOG_INF("hello specialized");
++	uart_write_str(line);
++	return true;
++}
++
++CAN_ID_HANDLER_DEFINE(handler_hello, CONFIG_CAN_UART_REPLAY_HELLO_SPECIALIZED_ID,
++		      handle_hello_specialized);
++#endif
++
++#if CONFIG_CAN_UART_REPLAY_START_ID != 0xFFFF
++/* --- start trigger ------------------------------------------------------- */
++static bool handle_start(const struct can_frame *frame)
++{
++	printing_active = true;
++	LOG_INF("Start trigger received (id=0x%03x), printing enabled", frame->id);
++	return true;
++}
++
++CAN_ID_HANDLER_DEFINE(handler_start, CONFIG_CAN_UART_REPLAY_START_ID, handle_start);
++#endif
++
++#if CONFIG_CAN_UART_REPLAY_STOP_ID != 0xFFFF
++/* --- stop trigger -------------------------------------------------------- */
++static bool handle_stop(const struct can_frame *frame)
++{
++	printing_active = false;
++	LOG_INF("Stop trigger received (id=0x%03x), printing disabled", frame->id);
++	return true;
++}
++
++CAN_ID_HANDLER_DEFINE(handler_stop, CONFIG_CAN_UART_REPLAY_STOP_ID, handle_stop);
++#endif
++
++/* -------------------------------------------------------------------------
++ * RX thread
++ * -------------------------------------------------------------------------
++ */
++static void can_rx_thread(void *arg1, void *arg2, void *arg3)
++{
++	struct can_frame frame;
++	char timestamp[FORMAT_UPTIME_HMS_LEN];
++	char line[96];
++	int err;
++
++	ARG_UNUSED(arg1);
++	ARG_UNUSED(arg2);
++	ARG_UNUSED(arg3);
++
++	while (true) {
++		err = k_msgq_get(&can_rx_msgq, &frame, K_FOREVER);
++		if (err != 0) {
++			LOG_ERR("Failed to get CAN frame from msgq (err %d)", err);
++			continue;
++		}
++
++		/* Walk the registered CAN ID handlers. */
++		bool consumed = false;
++		__maybe_unused struct can_id_handler *h;
++
++		STRUCT_SECTION_FOREACH(can_id_handler, h) {
++			if (frame.id == h->id) {
++				consumed = h->fn(&frame);
++				break;
++			}
++		}
++
++		if (consumed) {
++			continue;
++		}
++
++		if (!printing_active) {
++			LOG_DBG("Frame id=0x%03x ignored (printing inactive)", frame.id);
++			continue;
++		}
++
++		format_uptime_hms(timestamp, k_uptime_get());
++		LOG_HEXDUMP_INF(frame.data, frame.dlc, "RX");
++
++		format_can_frame_line(line, sizeof(line), timestamp, &frame);
++		LOG_INF("%s", line);
++		uart_write_str(line);
++	}
++}
++
++K_THREAD_STACK_DEFINE(can_rx_stack, CONFIG_CAN_UART_REPLAY_THREAD_STACK_SIZE);
++static struct k_thread can_rx_thread_data;
++
++static int can_uart_replay_init(void)
++{
++	const struct device *can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
++	int filter_id;
++	int err;
++
++	if (!device_is_ready(uart_dev)) {
++		LOG_ERR("UART device not ready");
++		return -ENODEV;
++	}
++
++	if (!device_is_ready(can_dev)) {
++		LOG_ERR("CAN device not ready");
++		return -ENODEV;
++	}
++
++	err = can_start(can_dev);
++	if (err != 0 && err != -EALREADY) {
++		LOG_ERR("Failed to start CAN controller (err %d)", err);
++		return err;
++	}
++
++	LOG_INF("CAN bitrate: %u bit/s",
++		(uint32_t)DT_PROP_OR(DT_CHOSEN(zephyr_canbus), bitrate,
++				     DT_PROP_OR(DT_CHOSEN(zephyr_canbus), bus_speed, 0)));
++
++	/*
++	 * Widen the hardware filter mask so that every configured trigger ID
++	 * passes through regardless of the user-configured ID/mask range.
++	 * For each trigger ID, clear the bits in the mask that differ between
++	 * the trigger ID and the filter base ID, forcing those bits to be
++	 * ignored by the hardware.
++	 */
++#if CONFIG_CAN_UART_REPLAY_START_ID != 0xFFFF
++	can_rx_filter.mask &= ~(CONFIG_CAN_UART_REPLAY_START_ID ^ CONFIG_CAN_UART_REPLAY_FILTER_ID);
++#endif
++#if CONFIG_CAN_UART_REPLAY_STOP_ID != 0xFFFF
++	can_rx_filter.mask &= ~(CONFIG_CAN_UART_REPLAY_STOP_ID ^ CONFIG_CAN_UART_REPLAY_FILTER_ID);
++#endif
++#if CONFIG_CAN_UART_REPLAY_HELLO_SPECIALIZED_ID != 0xFFFF
++	can_rx_filter.mask &=
++		~(CONFIG_CAN_UART_REPLAY_HELLO_SPECIALIZED_ID ^ CONFIG_CAN_UART_REPLAY_FILTER_ID);
++#endif
++	filter_id = can_add_rx_filter_msgq(can_dev, &can_rx_msgq, &can_rx_filter);
++	if (filter_id < 0) {
++		LOG_ERR("Failed to add CAN RX filter (err %d)", filter_id);
++		return filter_id;
++	}
++
++	LOG_INF("CAN RX ready, filter_id=%d mask=0x%03x", filter_id, can_rx_filter.mask);
++
++	k_thread_create(&can_rx_thread_data, can_rx_stack, K_THREAD_STACK_SIZEOF(can_rx_stack),
++			can_rx_thread, NULL, NULL, NULL, CONFIG_CAN_UART_REPLAY_THREAD_PRIORITY, 0,
++			K_NO_WAIT);
++	k_thread_name_set(&can_rx_thread_data, "can_uart_replay");
++
++	return 0;
++}
++
++SYS_INIT(can_uart_replay_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
+diff --git a/subsys/can_uart_replay/can_uart_replay.ld b/subsys/can_uart_replay/can_uart_replay.ld
+new file mode 100644
+index 0000000..c80f713
+--- /dev/null
++++ b/subsys/can_uart_replay/can_uart_replay.ld
+@@ -0,0 +1,14 @@
++/*
++ * SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++/*
++ * Linker fragment for the CAN UART replay subsystem.
++ * Places all STRUCT_SECTION_ITERABLE(can_id_handler, ...) entries into a
++ * contiguous ROM section so STRUCT_SECTION_FOREACH() can walk them.
++ */
++
++#include <zephyr/linker/iterable_sections.h>
++
++ITERABLE_SECTION_ROM(can_id_handler, Z_LINK_ITERABLE_SUBALIGN)
+-- 
+2.39.5 (Apple Git-154)
+

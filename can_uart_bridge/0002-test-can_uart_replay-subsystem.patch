@@ -1,0 +1,373 @@
+From 3ece6e2fc1ffe99d87789be3c9dcd365ba1ec03a Mon Sep 17 00:00:00 2001
+From: Jilay Pandya <jilay.pandya@outlook.com>
+Date: Sun, 8 Mar 2026 17:25:37 +0100
+Subject: [PATCH 2/5] test: can_uart_replay subsystem
+
+Signed-off-by: Jilay Pandya <jilay.pandya@outlook.com>
+---
+ tests/subsys/can_uart_replay/CMakeLists.txt |   7 +
+ tests/subsys/can_uart_replay/app.overlay    |  25 +++
+ tests/subsys/can_uart_replay/prj.conf       |  12 +
+ tests/subsys/can_uart_replay/src/main.c     | 236 ++++++++++++++++++++
+ tests/subsys/can_uart_replay/testcase.yaml  |  41 ++++
+ 5 files changed, 321 insertions(+)
+ create mode 100644 tests/subsys/can_uart_replay/CMakeLists.txt
+ create mode 100644 tests/subsys/can_uart_replay/app.overlay
+ create mode 100644 tests/subsys/can_uart_replay/prj.conf
+ create mode 100644 tests/subsys/can_uart_replay/src/main.c
+ create mode 100644 tests/subsys/can_uart_replay/testcase.yaml
+
+diff --git a/tests/subsys/can_uart_replay/CMakeLists.txt b/tests/subsys/can_uart_replay/CMakeLists.txt
+new file mode 100644
+index 0000000..bc6fc48
+--- /dev/null
++++ b/tests/subsys/can_uart_replay/CMakeLists.txt
+@@ -0,0 +1,7 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++# SPDX-License-Identifier: Apache-2.0
++
++cmake_minimum_required(VERSION 3.13.1)
++find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
++project(app LANGUAGES C)
++target_sources(app PRIVATE src/main.c)
+diff --git a/tests/subsys/can_uart_replay/app.overlay b/tests/subsys/can_uart_replay/app.overlay
+new file mode 100644
+index 0000000..c965cc0
+--- /dev/null
++++ b/tests/subsys/can_uart_replay/app.overlay
+@@ -0,0 +1,25 @@
++/*
++ * SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++/ {
++	chosen {
++		zephyr,canbus   = &can_loopback0;
++		zephyr,uart-can = &uart_emul;
++	};
++
++	can_loopback0: can_loopback0 {
++		compatible = "zephyr,can-loopback";
++		status = "okay";
++	};
++
++	uart_emul: uart-emul {
++		compatible = "zephyr,uart-emul";
++		status = "okay";
++		current-speed = <115200>;
++		rx-fifo-size = <256>;
++		tx-fifo-size = <256>;
++		loopback;
++	};
++};
+diff --git a/tests/subsys/can_uart_replay/prj.conf b/tests/subsys/can_uart_replay/prj.conf
+new file mode 100644
+index 0000000..4a7b0df
+--- /dev/null
++++ b/tests/subsys/can_uart_replay/prj.conf
+@@ -0,0 +1,12 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++# SPDX-License-Identifier: Apache-2.0
++
++CONFIG_CAN_UART_REPLAY=y
++CONFIG_CAN=y
++CONFIG_CAN_LOOPBACK=y
++CONFIG_SERIAL=y
++CONFIG_UART_EMUL=y
++CONFIG_EMUL=y
++CONFIG_ZTEST=y
++CONFIG_LOG=y
++CONFIG_TEST_RANDOM_GENERATOR=y
+diff --git a/tests/subsys/can_uart_replay/src/main.c b/tests/subsys/can_uart_replay/src/main.c
+new file mode 100644
+index 0000000..12ccb54
+--- /dev/null
++++ b/tests/subsys/can_uart_replay/src/main.c
+@@ -0,0 +1,236 @@
++/*
++ * SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#include <zephyr/drivers/can.h>
++#include <zephyr/drivers/uart.h>
++#include <zephyr/kernel.h>
++#include <zephyr/ztest.h>
++#include <string.h>
++#include <stdio.h>
++#include <utils/format_can.h>
++
++#define TEST_CAN_ID  0x123
++#define TEST_CAN_DLC 8
++
++struct can_uart_replay_fixture {
++	const struct device *can_dev;
++	const struct device *uart_dev;
++	const struct can_frame test_frame;
++};
++
++/* -------------------------------------------------------------------------
++ * Shared helpers
++ * -------------------------------------------------------------------------
++ */
++
++/* Read up to buf_len-1 chars from uart_dev until '\n' or timeout. */
++static int uart_read_line(const struct device *uart_dev, char *buf, size_t buf_len,
++			  k_timeout_t timeout)
++{
++	int64_t deadline = k_uptime_get() + k_ticks_to_ms_floor64(timeout.ticks);
++	size_t pos = 0;
++	unsigned char c;
++
++	while (pos < buf_len - 1) {
++		if (uart_poll_in(uart_dev, &c) == 0) {
++			buf[pos++] = c;
++			if (c == '\n') {
++				break;
++			}
++		} else {
++			if (k_uptime_get() >= deadline) {
++				break;
++			}
++			k_yield();
++		}
++	}
++
++	buf[pos] = '\0';
++	return pos;
++}
++
++/* Discard every byte currently in the UART emulator RX FIFO. */
++static void uart_drain(const struct device *uart_dev)
++{
++	unsigned char c;
++
++	while (uart_poll_in(uart_dev, &c) == 0) {
++	}
++}
++
++/* =========================================================================
++ * Suite: can_uart_replay  (scenario: can_uart_replay.default)
++ *
++ * No start/stop triggers — printing begins immediately and runs forever.
++ * =========================================================================
++ */
++
++static void *can_uart_replay_setup(void)
++{
++	static struct can_uart_replay_fixture fixture = {
++		.can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus)),
++		.uart_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_uart_can)),
++		.test_frame =
++			{
++				.flags = 0,
++				.id = TEST_CAN_ID,
++				.dlc = TEST_CAN_DLC,
++				.data = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
++			},
++	};
++	int err;
++
++	zassert_true(device_is_ready(fixture.can_dev), "CAN device not ready");
++	zassert_true(device_is_ready(fixture.uart_dev), "UART device not ready");
++
++	(void)can_stop(fixture.can_dev);
++	err = can_set_mode(fixture.can_dev, CAN_MODE_LOOPBACK);
++	zassert_ok(err, "failed to set CAN loopback mode (err %d)", err);
++	err = can_start(fixture.can_dev);
++	zassert_ok(err, "failed to restart CAN controller (err %d)", err);
++
++	return &fixture;
++}
++
++static void can_uart_replay_before(void *f)
++{
++	struct can_uart_replay_fixture *fixture = f;
++	uart_drain(fixture->uart_dev);
++}
++
++ZTEST_SUITE(can_uart_replay, NULL, can_uart_replay_setup, can_uart_replay_before, NULL, NULL);
++
++/* A sent frame must appear on the UART immediately (no trigger required). */
++ZTEST_F(can_uart_replay, test_uart_output)
++{
++	if (CONFIG_CAN_UART_REPLAY_START_ID != 0xFFFF) {
++		ztest_test_skip();
++	}
++
++	char expected[80];
++	char line[80];
++
++	format_can_frame_body(expected, sizeof(expected), &fixture->test_frame);
++
++	can_send(fixture->can_dev, &fixture->test_frame, K_MSEC(100), NULL, NULL);
++	k_sleep(K_MSEC(50)); /* allow some time for the frame to be processed */
++	int len = uart_read_line(fixture->uart_dev, line, sizeof(line), K_MSEC(200));
++
++	zassert_true(len > 0, "no UART output received");
++	zassert_not_null(strstr(line, expected),
++			 "UART output mismatch\n  got:      '%s'\n  want suffix: '%s'", line,
++			 expected);
++}
++
++ZTEST_F(can_uart_replay, test_hello_specialized_trigger)
++{
++	if (CONFIG_CAN_UART_REPLAY_HELLO_SPECIALIZED_ID == 0xFFFF) {
++		ztest_test_skip();
++	}
++
++	char expected[] = "hello specialized";
++	char line[80];
++
++	struct can_frame hello_frame = {
++		.id = CONFIG_CAN_UART_REPLAY_HELLO_SPECIALIZED_ID,
++		.dlc = 0,
++	};
++
++	can_send(fixture->can_dev, &hello_frame, K_MSEC(100), NULL, NULL);
++	k_sleep(K_MSEC(50)); /* allow some time for the frame to be processed */
++	int len = uart_read_line(fixture->uart_dev, line, sizeof(line), K_MSEC(200));
++
++	zassert_true(len > 0, "no UART output received");
++	zassert_not_null(strstr(line, expected),
++			 "UART output mismatch\n  got:      '%s'\n  want substring: '%s'", line,
++			 expected);
++}
++
++/*
++ * test_no_output_before_start
++ *
++ * Frames received before the start-trigger ID arrive must not produce any
++ * UART output.
++ */
++ZTEST_F(can_uart_replay, test_no_output_before_start)
++{
++	if (CONFIG_CAN_UART_REPLAY_START_ID == 0xFFFF) {
++		ztest_test_skip();
++	}
++
++	char line[80];
++
++	can_send(fixture->can_dev, &fixture->test_frame, K_MSEC(100), NULL, NULL);
++
++	int len = uart_read_line(fixture->uart_dev, line, sizeof(line), K_MSEC(100));
++
++	zassert_equal(len, 0, "expected silence before start trigger, got '%s'", line);
++}
++
++/*
++ * test_output_after_start
++ *
++ * Frames received after the start-trigger ID must be printed on UART.
++ */
++ZTEST_F(can_uart_replay, test_output_after_start)
++{
++	if (CONFIG_CAN_UART_REPLAY_START_ID == 0xFFFF) {
++		ztest_test_skip();
++	}
++
++	char expected[80];
++	char line[80];
++
++	format_can_frame_body(expected, sizeof(expected), &fixture->test_frame);
++
++	struct can_frame start_frame = {
++		.id = CONFIG_CAN_UART_REPLAY_START_ID,
++		.dlc = 0,
++	};
++	can_send(fixture->can_dev, &start_frame, K_MSEC(100), NULL, NULL);
++	k_sleep(K_MSEC(50)); /* allow some time for the frame to be processed */
++	can_send(fixture->can_dev, &fixture->test_frame, K_MSEC(100), NULL, NULL);
++	k_sleep(K_MSEC(50)); /* allow some time for the frame to be processed */
++
++	int len = uart_read_line(fixture->uart_dev, line, sizeof(line), K_MSEC(200));
++
++	zassert_true(len > 0, "expected UART output after start trigger, got none");
++	zassert_not_null(strstr(line, expected),
++			 "UART output mismatch\n  received:      '%s'\n  expected: '%s'", line,
++			 expected);
++}
++
++/*
++ * test_no_output_after_stop
++ *
++ * Once the stop-trigger ID is received, all subsequent frames must be
++ * suppressed permanently.
++ */
++ZTEST_F(can_uart_replay, test_no_output_after_stop)
++{
++	if (CONFIG_CAN_UART_REPLAY_START_ID == 0xFFFF || CONFIG_CAN_UART_REPLAY_STOP_ID == 0xFFFF) {
++		ztest_test_skip();
++	}
++
++	char line[80];
++
++	/* Activate printing first. */
++	struct can_frame start_stop_frame;
++	start_stop_frame.id = CONFIG_CAN_UART_REPLAY_START_ID;
++	can_send(fixture->can_dev, &start_stop_frame, K_MSEC(100), NULL, NULL);
++	k_sleep(K_MSEC(50)); /* allow some time for the frame to be processed */
++
++	can_send(fixture->can_dev, &start_stop_frame, K_MSEC(100), NULL, NULL);
++	k_sleep(K_MSEC(50)); /* allow some time for the frame to be processed */
++
++	/* Send multiple data frames — none should appear on UART. */
++	for (int i = 0; i < 3; i++) {
++		can_send(fixture->can_dev, &fixture->test_frame, K_MSEC(100), NULL, NULL);
++	}
++
++	int len = uart_read_line(fixture->uart_dev, line, sizeof(line), K_MSEC(100));
++
++	zassert_equal(len, 0, "expected silence after stop trigger, got '%s'", line);
++}
+diff --git a/tests/subsys/can_uart_replay/testcase.yaml b/tests/subsys/can_uart_replay/testcase.yaml
+new file mode 100644
+index 0000000..08a594a
+--- /dev/null
++++ b/tests/subsys/can_uart_replay/testcase.yaml
+@@ -0,0 +1,41 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++# SPDX-License-Identifier: Apache-2.0
++
++tests:
++  # -----------------------------------------------------------------------
++  # Default scenario: no start/stop triggers, printing begins immediately
++  # and continues indefinitely.
++  # Runs suite: can_uart_replay
++  # -----------------------------------------------------------------------
++  can_uart_replay.default:
++    tags: can uart
++    platform_allow:
++      - qemu_cortex_m3
++
++  # -----------------------------------------------------------------------
++  # Start/stop trigger scenario: printing is gated by a start-trigger CAN
++  # ID (0x100) and halted by a stop-trigger CAN ID (0x200).
++  # Runs suite: can_uart_replay_triggers
++  # -----------------------------------------------------------------------
++  can_uart_replay.start_stop:
++    tags: can uart
++    extra_configs:
++      - CONFIG_CAN_UART_REPLAY_START_ID=0x100
++      - CONFIG_CAN_UART_REPLAY_STOP_ID=0x200
++      - CONFIG_CAN_UART_REPLAY_FILTER_ID=0x100
++      - CONFIG_CAN_UART_REPLAY_FILTER_MASK=0x700
++    platform_allow:
++      - qemu_cortex_m3
++
++
++  # -----------------------------------------------------------------------
++  # Hello-specialized scenario: receiving a specific CAN ID (0x300) causes
++  # the subsystem to print "hello specialized" on UART.
++  # Runs suite: can_uart_replay_hello
++  # -----------------------------------------------------------------------
++  can_uart_replay.hello_specialized:
++    tags: can uart
++    extra_configs:
++      - CONFIG_CAN_UART_REPLAY_HELLO_SPECIALIZED_ID=0x300
++    platform_allow:
++      - qemu_cortex_m3
+-- 
+2.39.5 (Apple Git-154)
+

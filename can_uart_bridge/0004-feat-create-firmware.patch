@@ -1,0 +1,246 @@
+From 9af6284cb5e15c0c6076ae6bc4cc37b9ea100f79 Mon Sep 17 00:00:00 2001
+From: Jilay Pandya <jilay.pandya@outlook.com>
+Date: Sun, 8 Mar 2026 19:45:32 +0100
+Subject: [PATCH 4/5] feat: create firmware
+
+Signed-off-by: Jilay Pandya <jilay.pandya@outlook.com>
+---
+ can_uart_bridge/CMakeLists.txt                | 37 +++++++++++++++++++
+ can_uart_bridge/Kconfig                       | 15 ++++++++
+ can_uart_bridge/VERSION                       |  5 +++
+ can_uart_bridge/boards/qemu_cortex_m3.conf    |  7 ++++
+ can_uart_bridge/boards/qemu_cortex_m3.overlay | 26 +++++++++++++
+ can_uart_bridge/debug.conf                    | 12 ++++++
+ can_uart_bridge/prj.conf                      | 17 +++++++++
+ can_uart_bridge/sample.yaml                   | 15 ++++++++
+ can_uart_bridge/src/main.c                    | 28 ++++++++++++++
+ 9 files changed, 162 insertions(+)
+ create mode 100644 can_uart_bridge/CMakeLists.txt
+ create mode 100644 can_uart_bridge/Kconfig
+ create mode 100644 can_uart_bridge/VERSION
+ create mode 100644 can_uart_bridge/boards/qemu_cortex_m3.conf
+ create mode 100644 can_uart_bridge/boards/qemu_cortex_m3.overlay
+ create mode 100644 can_uart_bridge/debug.conf
+ create mode 100644 can_uart_bridge/prj.conf
+ create mode 100644 can_uart_bridge/sample.yaml
+ create mode 100644 can_uart_bridge/src/main.c
+
+diff --git a/can_uart_bridge/CMakeLists.txt b/can_uart_bridge/CMakeLists.txt
+new file mode 100644
+index 0000000..1cf0680
+--- /dev/null
++++ b/can_uart_bridge/CMakeLists.txt
+@@ -0,0 +1,37 @@
++#-------------------------------------------------------------------------------
++# Zephyr Example Application
++#
++# Copyright (c) 2021 Nordic Semiconductor ASA
++# SPDX-License-Identifier: Apache-2.0
++
++cmake_minimum_required(VERSION 3.13.1)
++find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
++
++project(can_uart_bridge LANGUAGES C)
++
++target_sources(app PRIVATE src/main.c)
++
++# The code below locates the git index file for this repository and adds it as a dependency for
++# the application VERSION file so that if the repo has a new commit added, even if no files in
++# the build have changed, the application version file will be regenerated with the new git commit
++find_package(Git QUIET)
++if(GIT_FOUND)
++  execute_process(
++    COMMAND ${GIT_EXECUTABLE} rev-parse --absolute-git-dir
++    WORKING_DIRECTORY .
++    OUTPUT_VARIABLE application_git_dir
++    OUTPUT_STRIP_TRAILING_WHITESPACE
++    ERROR_STRIP_TRAILING_WHITESPACE
++    ERROR_VARIABLE stderr
++    RESULT_VARIABLE return_code
++  )
++  # If there is an error e.g. it is not a git repo, we just silently ignore it and continue
++  # without a dependency, this will be the case with freestanding applications.
++  if(NOT return_code)
++    if(NOT "${stderr}" STREQUAL "")
++      message(WARNING "Application build version git rev-parse warned: ${stderr}")
++    endif()
++
++    set_property(TARGET app_version_h PROPERTY APP_VERSION_DEPENDS ${application_git_dir}/index)
++  endif()
++endif()
+diff --git a/can_uart_bridge/Kconfig b/can_uart_bridge/Kconfig
+new file mode 100644
+index 0000000..745e899
+--- /dev/null
++++ b/can_uart_bridge/Kconfig
+@@ -0,0 +1,15 @@
++# Copyright (c) 2021 Nordic Semiconductor ASA
++# SPDX-License-Identifier: Apache-2.0
++#
++# This file is the application Kconfig entry point. All application Kconfig
++# options can be defined here or included via other application Kconfig files.
++# You can browse these options using the west targets menuconfig (terminal) or
++# guiconfig (GUI).
++
++menu "Zephyr"
++source "Kconfig.zephyr"
++endmenu
++
++module = CAN_UART_BRIDGE
++module-str = CAN_UART_BRIDGE
++source "subsys/logging/Kconfig.template.log_config"
+diff --git a/can_uart_bridge/VERSION b/can_uart_bridge/VERSION
+new file mode 100644
+index 0000000..16a1373
+--- /dev/null
++++ b/can_uart_bridge/VERSION
+@@ -0,0 +1,5 @@
++VERSION_MAJOR = 1
++VERSION_MINOR = 0
++PATCHLEVEL = 0
++VERSION_TWEAK = 0
++EXTRAVERSION =
+diff --git a/can_uart_bridge/boards/qemu_cortex_m3.conf b/can_uart_bridge/boards/qemu_cortex_m3.conf
+new file mode 100644
+index 0000000..166bbc1
+--- /dev/null
++++ b/can_uart_bridge/boards/qemu_cortex_m3.conf
+@@ -0,0 +1,7 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++# SPDX-License-Identifier: Apache-2.0
++
++CONFIG_TEST_RANDOM_GENERATOR=y
++CONFIG_CAN_LOOPBACK=y
++CONFIG_UART_EMUL=y
++CONFIG_EMUL=y
+diff --git a/can_uart_bridge/boards/qemu_cortex_m3.overlay b/can_uart_bridge/boards/qemu_cortex_m3.overlay
+new file mode 100644
+index 0000000..13eddf8
+--- /dev/null
++++ b/can_uart_bridge/boards/qemu_cortex_m3.overlay
+@@ -0,0 +1,26 @@
++/*
++ * SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++/ {
++	chosen {
++		zephyr,canbus   = &can_loopback0;
++		zephyr,uart-can = &uart_emul;
++	};
++
++	can_loopback0: can_loopback0 {
++		compatible = "zephyr,can-loopback";
++		status = "okay";
++		bitrate = <500000>;
++	};
++
++	uart_emul: uart-emul {
++		compatible = "zephyr,uart-emul";
++		status = "okay";
++		current-speed = <115200>;
++		rx-fifo-size = <256>;
++		tx-fifo-size = <256>;
++		loopback;
++	};
++};
+diff --git a/can_uart_bridge/debug.conf b/can_uart_bridge/debug.conf
+new file mode 100644
+index 0000000..12992ce
+--- /dev/null
++++ b/can_uart_bridge/debug.conf
+@@ -0,0 +1,12 @@
++# Copyright (c) 2021 Nordic Semiconductor ASA
++# SPDX-License-Identifier: Apache-2.0
++#
++# This is a Kconfig fragment which can be used to enable debug-related options
++# in the application. See the README for more details.
++
++# compiler
++CONFIG_DEBUG_OPTIMIZATIONS=y
++
++# logging
++CONFIG_LOG=y
++CONFIG_APP_LOG_LEVEL_DBG=y
+diff --git a/can_uart_bridge/prj.conf b/can_uart_bridge/prj.conf
+new file mode 100644
+index 0000000..9626b0d
+--- /dev/null
++++ b/can_uart_bridge/prj.conf
+@@ -0,0 +1,17 @@
++# Copyright (c) 2021 Nordic Semiconductor ASA
++# SPDX-License-Identifier: Apache-2.0
++#
++# This file contains selected Kconfig options for the application.
++
++CONFIG_CAN_UART_REPLAY=y
++CONFIG_CAN=y
++CONFIG_SERIAL=y
++CONFIG_LOG=y
++CONFIG_CAN_RANDOM_TRAFFIC=y
++CONFIG_CAN_RAND_TX_MSG_COUNT=3
++CONFIG_CAN_RAND_TX_MSG0_ID=0x1
++CONFIG_CAN_RAND_TX_MSG0_PERIOD_MS=3600000
++CONFIG_CAN_RAND_TX_MSG1_ID=0x2
++CONFIG_CAN_RAND_TX_MSG1_PERIOD_MS=3600000
++CONFIG_CAN_RAND_TX_MSG2_ID=0x3
++CONFIG_CAN_RAND_TX_MSG2_PERIOD_MS=3600000
+diff --git a/can_uart_bridge/sample.yaml b/can_uart_bridge/sample.yaml
+new file mode 100644
+index 0000000..188c258
+--- /dev/null
++++ b/can_uart_bridge/sample.yaml
+@@ -0,0 +1,15 @@
++# This file is provided so that the application can be compiled using Twister,
++# the Zephyr testing tool. In this file, multiple combinations can be specified,
++# so that you can easily test all of them locally or in CI.
++sample:
++  description: Example application
++  name: example-application
++common:
++  build_only: true
++  integration_platforms:
++    - qemu_cortex_m3
++tests:
++  app.default: {}
++  app.debug:
++    extra_overlay_confs:
++      - debug.conf
+diff --git a/can_uart_bridge/src/main.c b/can_uart_bridge/src/main.c
+new file mode 100644
+index 0000000..1a57d0a
+--- /dev/null
++++ b/can_uart_bridge/src/main.c
+@@ -0,0 +1,28 @@
++/*
++ * Copyright (c) 2021 Nordic Semiconductor ASA
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#include <zephyr/kernel.h>
++#include <zephyr/logging/log.h>
++#include <zephyr/init.h>
++
++#include <app_version.h>
++
++LOG_MODULE_REGISTER(main, CONFIG_CAN_UART_BRIDGE_LOG_LEVEL);
++
++static int print_version(void)
++{
++	LOG_INF("can_uart_bridge v%s (build %s)", APP_VERSION_STRING, STRINGIFY(APP_BUILD_VERSION));
++	return 0;
++}
++
++SYS_INIT(print_version, POST_KERNEL, CONFIG_APPLICATION_INIT_PRIORITY);
++
++int main(void)
++{
++	for (;;) {
++		k_sleep(K_FOREVER);
++	}
++	return 0;
++}
+-- 
+2.39.5 (Apple Git-154)
+
