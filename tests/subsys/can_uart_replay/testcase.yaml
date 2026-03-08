@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
+# SPDX-License-Identifier: Apache-2.0
+
+tests:
+  # -----------------------------------------------------------------------
+  # Default scenario: no start/stop triggers, printing begins immediately
+  # and continues indefinitely.
+  # Runs suite: can_uart_replay
+  # -----------------------------------------------------------------------
+  can_uart_replay.default:
+    tags: can uart
+    platform_allow:
+      - qemu_cortex_m3
+
+  # -----------------------------------------------------------------------
+  # Start/stop trigger scenario: printing is gated by a start-trigger CAN
+  # ID (0x100) and halted by a stop-trigger CAN ID (0x200).
+  # Runs suite: can_uart_replay_triggers
+  # -----------------------------------------------------------------------
+  can_uart_replay.start_stop:
+    tags: can uart
+    extra_configs:
+      - CONFIG_CAN_UART_REPLAY_START_ID=0x100
+      - CONFIG_CAN_UART_REPLAY_STOP_ID=0x200
+      - CONFIG_CAN_UART_REPLAY_FILTER_ID=0x100
+      - CONFIG_CAN_UART_REPLAY_FILTER_MASK=0x700
+    platform_allow:
+      - qemu_cortex_m3
+
+
+  # -----------------------------------------------------------------------
+  # Hello-specialized scenario: receiving a specific CAN ID (0x300) causes
+  # the subsystem to print "hello specialized" on UART.
+  # Runs suite: can_uart_replay_hello
+  # -----------------------------------------------------------------------
+  can_uart_replay.hello_specialized:
+    tags: can uart
+    extra_configs:
+      - CONFIG_CAN_UART_REPLAY_HELLO_SPECIALIZED_ID=0x300
+    platform_allow:
+      - qemu_cortex_m3

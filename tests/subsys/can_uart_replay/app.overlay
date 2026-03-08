@@ -1,0 +1,25 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/ {
+	chosen {
+		zephyr,canbus   = &can_loopback0;
+		zephyr,uart-can = &uart_emul;
+	};
+
+	can_loopback0: can_loopback0 {
+		compatible = "zephyr,can-loopback";
+		status = "okay";
+	};
+
+	uart_emul: uart-emul {
+		compatible = "zephyr,uart-emul";
+		status = "okay";
+		current-speed = <115200>;
+		rx-fifo-size = <256>;
+		tx-fifo-size = <256>;
+		loopback;
+	};
+};
