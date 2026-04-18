@@ -1,0 +1,309 @@
+@startuml component_overview
+
+header
+<size:20><b>Created By: Jilay Sandeep Pandya</b></size>
+endheader
+
+title Component Overview — mqtt_client / motion_control / control_loop
+
+skinparam componentStyle rectangle
+skinparam defaultFontSize 12
+skinparam linetype ortho
+skinparam headerFontSize 20
+skinparam titleHorizontalAlignment left
+
+cloud "MQTT Broker\n(169.254.191.55:1883)" as broker
+
+package "mqtt_client subsys" {
+    component [mqtt_client.c\n(pubsub thread)] as mqtt
+    component [mqtt_evt_handler] as evthandler
+    interface "mqtt_client_listener_t\ncallback" as listener_iface
+}
+
+package "motion_control subsys" {
+    component [motion_control_services_register.c\nmotion_control_service_listener()] as mc_listener
+    component [motion_control_services.c\nset_sync_axis_0_position()\nget_sync_axis_0_position()] as mc_services
+    component [motion_control_events.c\n(events thread)] as mc_events
+    queue "K_MSGQ\nmotion_control_events_queue" as msgq
+    frame "Event Handler Registry" as handler_registry {
+        artifact "RX [SET_X] → set_position_event_handler()" as rx_set_x
+        artifact "RX [GET_X] → (none registered)" as rx_get_x
+        artifact "TX [SET_X] → (none registered)" as tx_set_x
+    }
+}
+
+package "control_loop subsys" {
+
+    collections "control_loop_event_handlers.c\n<<SYS_INIT>>\nset_position_event_handler()" as cl_evthandler
+
+    package "control_loop.c  (control_loop_thread — busy loop, no sleep)" {
+        component "① set_point_generator_update(dt_ctrl)\n   reads/writes: trajectory.current_setpoint\n   protected by K_SEM set_point_sem\n   → desired_pos" as step1
+        component "② sensor_read_position(&encoder)\n   reads: encoder.physical_plant->y  (= motor.y)\n   → actual_pos  [prev-tick plant output]" as step2
+        component "③ control_loop_compute(&pid, desired_pos, actual_pos, dt_ctrl)\n   PID: Kp·e + Ki·∫e·dt + Kd·Δe/dt\n   → command_volts" as step3
+        component "④ actuator_write_voltage(&motor_driver, command_volts)\n   clamp to [-24V, +24V]\n   writes: motor_driver.physical_plant->u  (= motor.u)" as step4
+        component "⑤ state_space_model_step(&motor, dt_sim) × 1000\n   advances x[0..2], recomputes y = C·x\n   [1000 × 1µs = 1ms of physics]" as step5
+        component "⑥ sensor_read_velocity(&encoder)\n   reads: encoder.physical_plant->x[1]  (velocity)\n   → actual_vel  [post-sim new state]" as step6
+    }
+
+    package "lib/plant  (state_space_bldc_motor.c)" as plant_lib {
+        database "state_space_model\n──────────────────\nx[0] : position  (rad)\nx[1] : velocity  (rad/s)\nx[2] : current   (A)\nu    : voltage input (V)\ny    : position output = C·x\n──────────────────\nA, B, C : motor matrices\n  J=3.2284e-6  b=3.5077e-6\n  K=0.0274  R=4.0  L=2.75e-6" as ssm
+    }
+}
+
+broker --> mqtt : TCP/MQTT subscribe\n"motion_control/commands/#"
+mqtt --> evthandler : mqtt_evt_handler()
+evthandler --> listener_iface : mqtt_client_listener(topic, payload)
+listener_iface --> mc_listener : motion_control_service_listener()
+mc_listener --> mc_services : matches topic →\ncalls service->func()
+mc_services --> mc_events : motion_control_event_post\n(EVENT_SET_X, RX, position)
+mc_events --> msgq : k_msgq_put()
+msgq --> mc_events : k_msgq_get()\n(events thread unblocks)
+mc_events --> handler_registry : lookup rx_event_handlers[SET_X]
+handler_registry --> cl_evthandler : call handler(position)
+cl_evthandler --> step1 : control_loop_set_target_setpoint(position)\n
+
+' sequential flow inside control_loop_thread
+step1 -down-> step2
+step2 -down-> step3
+step3 -down-> step4
+step4 -down-> step5
+step5 -down-> step6
+step6 -up-> step1 : next tick
+
+' interactions with plant model
+step2 ..> ssm : read  motor.y\n(position output)
+step4 ..> ssm : write motor.u\n(voltage input)
+step5 ..> ssm : state_space_model_step(dt_sim)\ndx = A·x + B·u\nx += dx·dt\ny  = C·x
+step6 ..> ssm : read  motor.x[1]\n(velocity state)
+
+' SYS_INIT registration at boot
+cl_evthandler -[dashed]-> handler_registry : <<SYS_INIT>>\nmotion_control_add_event_handler\n(SET_X, RX, set_position_event_handler)
+
+mqtt <-- broker : PUBLISH "zephyr/sensors/temperature"
+
+@enduml
+
+' ─────────────────────────────────────────────────────────────────────────────
+
+@startuml sequence_set_position
+title Sequence — MQTT "set_x" command → PID setpoint update
+
+skinparam defaultFontSize 12
+
+participant "MQTT Broker" as broker
+participant "mqtt_client\n(pubsub_thread)" as mqtt
+participant "motion_control_\nservice_listener" as mc_listener
+participant "set_sync_axis_0\n_position()" as mc_svc
+participant "motion_control_\nevents_thread" as mc_evt_thread
+participant "set_position_\nevent_handler()" as cl_evt
+participant "control_loop_\nthread" as cl_thread
+
+broker -> mqtt : PUBLISH\ntopic: motion_control/commands/set_x\npayload: {"position": 1000}
+activate mqtt
+
+mqtt -> mqtt : mqtt_evt_handler(MQTT_EVT_PUBLISH)
+mqtt -> mqtt : handle_publish()\n→ mqtt_client_listener(topic, payload)
+mqtt -> mc_listener : motion_control_service_listener\n(topic, payload)
+activate mc_listener
+
+mc_listener -> mc_listener : STRUCT_SECTION_FOREACH — match "set_x"
+mc_listener -> mc_listener : json_obj_parse(payload)\n→ set_sync_axis_0_position_data {position=1000}
+mc_listener -> mc_svc : service->func(&service_data)
+activate mc_svc
+
+mc_svc -> mc_evt_thread : motion_control_event_post\n(EVENT_SET_X, RX, 1000)\n→ k_msgq_put()
+deactivate mc_svc
+deactivate mc_listener
+deactivate mqtt
+
+activate mc_evt_thread
+mc_evt_thread -> mc_evt_thread : k_msgq_get() unblocks
+mc_evt_thread -> cl_evt : rx_event_handlers[SET_X].handler(1000)
+deactivate mc_evt_thread
+
+activate cl_evt
+cl_evt -> cl_thread : control_loop_set_target_setpoint(1000)
+activate cl_thread
+
+cl_thread -> cl_thread : k_sem_take(set_point_sem)\nset_point_generator_init(&trajectory, 1000, 250.0)\nk_sem_give(set_point_sem)
+deactivate cl_thread
+deactivate cl_evt
+
+note over cl_thread
+  Next control_loop_thread tick:
+  desired_pos ramps toward 1000 rad
+  PID computes new command_volts
+  actuator_write_voltage() → motor.u
+end note
+
+@enduml
+
+' ─────────────────────────────────────────────────────────────────────────────
+
+@startuml control_loop_activity
+title Activity — control_loop_thread (execution order per control_loop.c)
+
+skinparam defaultFontSize 12
+
+start
+
+:state_space_model_init(&motor);
+:motor_driver.physical_plant = &motor;
+:encoder.physical_plant     = &motor;
+note right: both share the same\nstate_space_model instance
+:control_loop_init(&pid, Kp=0.5, Ki=0.01, Kd=0.005);
+note right: dt_ctrl = 1ms  dt_sim = 1µs\nsim_steps = dt_ctrl / dt_sim = 1000
+
+repeat
+
+    :① set_point_generator_update(&trajectory, dt_ctrl)
+    → desired_pos;
+    note right: ramps current_setpoint toward\nfinal_target at max_speed_rad_s\nprotected by set_point_sem
+
+    :② sensor_read_position(&encoder)
+    → actual_pos = motor.y;
+    note right: reads output of state_space_model\nfrom **previous** tick
+
+    :③ control_loop_compute(&pid, desired_pos, actual_pos, dt_ctrl)
+    → command_volts;
+    note right: PID: Kp·e + Ki·∫e·dt + Kd·Δe/dt
+
+    :④ actuator_write_voltage(&motor_driver, command_volts)
+    → motor.u = clamp(volts, -24V, +24V);
+
+    :⑤ inner sim loop × 1000 iterations;
+    note right: **lib/plant: state_space_model_step(&motor, 1µs)**\ndx[i] = A[i][j]·x[j] + B[i]·u\nx[i] += dx[i]·dt\ny = C·x  →  y = x[0]  (position)\n─────────────────────────\nx[0] position (rad)\nx[1] velocity (rad/s)\nx[2] current  (A)\nA[1][1]=-b/J  A[1][2]=K/J\nA[2][1]=-K/L  A[2][2]=-R/L\nB[2]=1/L   C[0]=1\n1000 × 1µs = 1ms of physics
+
+    :⑥ sensor_read_velocity(&encoder)
+    → actual_vel = motor.x[1];
+    note right: reads velocity state **after**\ninner sim loop has run
+
+    :log_control_loop_status() every 1000 ticks;
+    note right: only logs when logging_tick % 1000 == 0
+
+repeat while (for ever) is
+    note right: no k_sleep — busy loop\nthread yields only via Zephyr\npreemption or cooperative yield
+
+stop
+
+@enduml
+
+' ─────────────────────────────────────────────────────────────────────────────
+
+@startuml data_structures
+title Key Data Structures
+
+skinparam defaultFontSize 12
+
+class set_point_generator {
+    + float final_target
+    + float max_speed_rad_s
+    + float current_setpoint
+    --
+    + set_point_generator_init(target, speed)
+    + set_point_generator_update(dt) : float
+}
+
+class control_loop {
+    + double Kp
+    + double Ki
+    + double Kd
+    + double integral_err
+    + double prev_err
+    --
+    + control_loop_init(Kp, Ki, Kd)
+    + control_loop_compute(setpoint, measurement, dt) : float
+}
+
+class actuator {
+    + state_space_model *physical_plant
+    --
+    + actuator_write_voltage(volts)
+}
+
+class sensor {
+    + state_space_model *physical_plant
+    --
+    + sensor_read_position() : float
+    + sensor_read_velocity() : float
+}
+
+class state_space_model {
+    + float x[]  ' state vector
+    + float u    ' input (voltage)
+    + float y    ' output (position)
+    --
+    + state_space_model_init()
+    + state_space_model_step(dt)
+}
+
+class motion_control_event_handler {
+    + int (*handler)(int)
+}
+
+class motion_control_service {
+    + const char *name        ' MQTT topic
+    + func(void *data) : int
+    + service_descriptor[]
+    + service_descriptor_size
+}
+
+class mqtt_client_ctx <<singleton>> {
+    + broker: sockaddr_storage
+    + rx_buf[512]
+    + tx_buf[512]
+    + keepalive = 60
+    + clean_session = 1
+    --
+    + mqtt_evt_handler()
+    + subscribe()
+    + publish()
+}
+
+actuator --> state_space_model : writes u
+sensor --> state_space_model : reads y, x[1]
+control_loop ..> set_point_generator : uses desired_pos
+control_loop ..> actuator : writes command_volts
+control_loop ..> sensor : reads actual_pos
+
+mqtt_client_ctx ..> motion_control_service : listener dispatches\nby topic name
+motion_control_service ..> motion_control_event_handler : posts event →\ndispatched by events thread
+
+@enduml
+
+' ─────────────────────────────────────────────────────────────────────────────
+
+@startuml thread_overview
+title Zephyr Threads & Synchronisation Primitives
+
+skinparam defaultFontSize 12
+
+rectangle "K_THREAD_DEFINE\ncontrol_loop_thread\n(stack 1024, prio APPLICATION)" as t_cl
+rectangle "K_THREAD_DEFINE\nmotion_control_events_thread\n(stack 1024, prio APPLICATION)" as t_mc
+rectangle "k_thread_create\nmqtt_pubsub_thread\n(stack 4096, prio 7)" as t_mqtt
+
+database "K_SEM\nset_point_sem\n(initial=1, limit=1)" as sem
+queue "K_MSGQ\nmotion_control_events_queue\n(depth=MOTION_CONTROL_EVENT_MAX)" as msgq
+
+t_cl --> sem : k_sem_take / k_sem_give\n(protect trajectory update)
+t_mc --> msgq : k_msgq_put (event_post)\nk_msgq_get (dispatch)
+t_cl <-- t_mc : calls control_loop_set_target_setpoint()\n  which takes set_point_sem
+t_mqtt --> t_mc : calls motion_control_event_post()\n  → k_msgq_put (non-blocking K_NO_WAIT)
+
+note bottom of t_mqtt
+  SYS_INIT(mqtt_pubsub_init, APPLICATION, ...)
+  creates the thread at boot
+end note
+
+note bottom of t_mc
+  Blocks on k_msgq_get(K_FOREVER)
+  Dispatches to rx/tx handler arrays
+end note
+
+note bottom of t_cl
+  Busy loop (no sleep).
+  Inner sim runs 1000×1µs per
+  1ms control tick.
+end note
+
+@enduml

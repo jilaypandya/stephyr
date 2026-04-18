@@ -1,0 +1,25 @@
+
+config PLANT
+    bool "Plant"
+
+choice
+    prompt "Plant model type"
+    default PHYSICAL_PLANT_MODEL
+
+config PHYSICAL_PLANT_MODEL
+    bool "Physical plant model"
+    depends on BROKEN
+
+config STATE_SPACE_MODEL
+    bool "State-space plant model"
+
+endchoice
+
+choice
+    prompt "Plant model"
+    default PLANT_MODEL_DC_MOTOR
+
+config PLANT_MODEL_DC_MOTOR
+    bool "DC Motor"
+
+endchoice

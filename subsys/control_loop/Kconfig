@@ -1,0 +1,3 @@
+config CONTROL_LOOP
+    bool "Control Loop"
+    depends on PLANT

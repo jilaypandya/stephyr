@@ -1,0 +1,2 @@
+zephyr_library()
+zephyr_library_sources_ifdef(CONFIG_MQTT_PUB_SUB_CLIENT mqtt_client.c)

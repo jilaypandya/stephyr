@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
+# SPDX-License-Identifier: Apache-2.0
+
+config MOTION_CONTROL
+    bool "Motion Control Subsystem"
+
+if MOTION_CONTROL
+
+config MOTION_CONTROL_SERVICES
+    bool "Motion Control Services"
+    select MOTION_CONTROL_SERVICES_REGISTER
+    select MOTION_CONTROL_EVENT_HANDLER
+    select JSON_LIBRARY
+
+config MOTION_CONTROL_EVENT_HANDLER
+    bool "Motion Control Event Handler"
+
+config MOTION_CONTROL_SERVICES_REGISTER
+    bool "Motion Control Services Register"
+    depends on MQTT_PUB_SUB_CLIENT
+
+endif # MOTION_CONTROL

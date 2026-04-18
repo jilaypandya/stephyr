@@ -1,0 +1,2 @@
+config MQTT_PUB_SUB_CLIENT
+    bool "MQTT Pub/Sub client"

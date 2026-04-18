@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Jilay Sandeep Pandya
+# SPDX-License-Identifier: Apache-2.0
+
+zephyr_library()
+zephyr_linker_sources_ifdef(CONFIG_MOTION_CONTROL_SERVICES_REGISTER ROM_SECTIONS motion_control_services.ld)
+zephyr_library_sources_ifdef(CONFIG_MOTION_CONTROL_SERVICES_REGISTER motion_control_services_register.c)
+zephyr_library_sources_ifdef(CONFIG_MOTION_CONTROL_EVENT_HANDLER motion_control_events.c)
+zephyr_library_sources_ifdef(CONFIG_MOTION_CONTROL_SERVICES motion_control_services.c)
